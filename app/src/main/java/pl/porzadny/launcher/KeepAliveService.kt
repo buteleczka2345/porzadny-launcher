@@ -21,7 +21,7 @@ class KeepAliveService : Service() {
         nm.createNotificationChannel(NotificationChannel("ram", "Launcher w pamięci", NotificationManager.IMPORTANCE_MIN))
         val n = Notification.Builder(this, "ram")
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("Porządny Launcher gotowy")
+            .setContentTitle("PLauncher gotowy")
             .setOngoing(true)
             .build()
         try {

@@ -41,6 +41,7 @@ import java.text.Collator
 import java.util.Locale
 
 private const val DIR = "dir:"
+private const val CAT = "cat:" // przeciągany nagłówek folderu z listy, żeby pulpit go nie łapał
 
 class App(val key: String, val pkg: String, val label: String, val icon: Drawable, val component: ComponentName, val user: UserHandle, val category: Int)
 
@@ -61,6 +62,10 @@ class MainActivity : Activity() {
     private var desk: List<String>
         get() = prefs.getString("desk", "")!!.split('\n').filter { it.isNotEmpty() }
         set(v) = prefs.edit().putString("desk", v.joinToString("\n")).apply()
+    // Kolejność folderów z listy; foldery spoza zapisu (np. nowe w kolejnej wersji) dochodzą na koniec.
+    private var order: List<String>
+        get() = prefs.getString("order", "")!!.split('\n').filter { it in FOLDERS }.let { it + (FOLDERS - it.toSet()) }
+        set(v) = prefs.edit().putString("order", v.joinToString("\n")).apply()
     private var moves: Map<String, String>
         get() = prefs.getString("moves", "")!!.split('\n').mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
         set(v) = prefs.edit().putString("moves", v.entries.joinToString("\n") { "${it.key}=${it.value}" }).apply()
@@ -287,7 +292,8 @@ class MainActivity : Activity() {
         val mv = moves
         val open = openAll ?: expanded
         val groups = apps.groupBy { folderOf(it, mv) }
-        for (f in FOLDERS) {
+        val ord = order
+        for (f in ord) {
             val list = groups[f] ?: continue
             val isOpen = f in open
             content.addView(header("${if (isOpen) "▾" else "▸"}  📁 $f (${list.size})").apply {
@@ -296,6 +302,24 @@ class MainActivity : Activity() {
                     val v = if (isOpen) open - f else open + f
                     if (openAll != null) openAll = v else expanded = v
                     render()
+                }
+                // przytrzymaj i przeciągnij na inny folder = zmiana kolejności folderów
+                setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), CAT + f, 0); true }
+                setOnDragListener { v, e ->
+                    val from = (e.localState as? String)?.takeIf { it.startsWith(CAT) }?.removePrefix(CAT) ?: return@setOnDragListener false
+                    when (e.action) {
+                        DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
+                        DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
+                        DragEvent.ACTION_DROP -> if (from != f) {
+                            val l = ord.toMutableList()
+                            val to = l.indexOf(f)
+                            l.remove(from)
+                            l.add(to, from)
+                            order = l
+                            render()
+                        }
+                    }
+                    true
                 }
             })
             if (isOpen) content.addView(grid(list))
@@ -319,11 +343,11 @@ class MainActivity : Activity() {
                 setOnClickListener { if (a != null) launcher.startMainActivity(a.component, a.user, null, null) else openDir(name) }
                 setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), k, 0); true }
                 setOnDragListener { v, e ->
+                    val from = (e.localState as? String)?.takeIf { !it.startsWith(CAT) } ?: return@setOnDragListener false
                     when (e.action) {
                         DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
                         DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
                         DragEvent.ACTION_DROP -> {
-                            val from = e.localState as String
                             when {
                                 from == k -> if (a != null) menu(a) else dirMenu(name)
                                 a == null && !from.startsWith(DIR) -> putInDir(from, name)
@@ -462,7 +486,7 @@ class MainActivity : Activity() {
     }
 
     private fun moveDialog(a: App) {
-        val choices = arrayOf("↩ Automatycznie") + FOLDERS
+        val choices = arrayOf("↩ Automatycznie") + order
         AlertDialog.Builder(this).setTitle("Przenieś: ${a.label}").setItems(choices) { _, i ->
             moves = if (i == 0) moves - a.pkg else moves + (a.pkg to choices[i])
             render()

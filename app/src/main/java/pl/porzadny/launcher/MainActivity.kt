@@ -6,13 +6,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
-import android.content.pm.ShortcutInfo
-import android.content.pm.ShortcutManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -34,7 +29,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import java.text.Collator
 import java.util.Locale
 
@@ -54,6 +48,9 @@ class MainActivity : Activity() {
     private var favorites: List<String>
         get() = prefs.getString("fav", "")!!.split('\n').filter { it.isNotEmpty() }
         set(v) = prefs.edit().putString("fav", v.joinToString("\n")).apply()
+    private var desk: List<String>
+        get() = prefs.getString("desk", "")!!.split('\n').filter { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("desk", v.joinToString("\n")).apply()
     private var moves: Map<String, String>
         get() = prefs.getString("moves", "")!!.split('\n').mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
         set(v) = prefs.edit().putString("moves", v.entries.joinToString("\n") { "${it.key}=${it.value}" }).apply()
@@ -109,7 +106,7 @@ class MainActivity : Activity() {
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             fitsSystemWindows = true // targetSdk 35 rysuje pod paskiem stanu
-            setBackgroundColor(0x88000000.toInt())
+            setBackgroundColor(Color.BLACK)
             addView(top)
             addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         })
@@ -260,36 +257,16 @@ class MainActivity : Activity() {
 
     private fun menu(a: App) {
         val isFav = a.key in favorites
-        val items = arrayOf(if (isFav) "Usuń z ulubionych" else "⭐ Do ulubionych", "📁 Przenieś do folderu…", "📲 Skrót na pulpit", "ℹ Informacje o aplikacji")
+        val onDesk = a.key in desk
+        val items = arrayOf(if (isFav) "Usuń z ulubionych" else "⭐ Do ulubionych", "📁 Przenieś do folderu…", if (onDesk) "Usuń z pulpitu" else "📲 Skrót na pulpit", "ℹ Informacje o aplikacji")
         AlertDialog.Builder(this).setTitle(a.label).setItems(items) { _, i ->
             when (i) {
                 0 -> { favorites = if (isFav) favorites - a.key else favorites + a.key; render() }
                 1 -> moveDialog(a)
-                2 -> pinToDesktop(a)
+                2 -> { desk = if (onDesk) desk - a.key else desk + a.key; render() }
                 3 -> launcher.startAppDetailsActivity(a.component, a.user, null, null)
             }
         }.show()
-    }
-
-    /** Skrót na pulpicie domyślnego ekranu głównego; gdy to my nim jesteśmy (albo nie umie), lądują w Ulubionych. */
-    private fun pinToDesktop(a: App) {
-        val sm = getSystemService(ShortcutManager::class.java)
-        if (!sm.isRequestPinShortcutSupported) {
-            if (a.key !in favorites) favorites = favorites + a.key
-            render()
-            Toast.makeText(this, "Ekran główny nie przyjmuje skrótów — dodałem do ⭐ Ulubionych", Toast.LENGTH_LONG).show()
-            return
-        }
-        val bmp = Bitmap.createBitmap(dp(48), dp(48), Bitmap.Config.ARGB_8888)
-        val d = a.icon.constantState?.newDrawable() ?: a.icon // kopia: nie ruszamy granic ikony wyświetlanej w siatce
-        d.setBounds(0, 0, bmp.width, bmp.height)
-        d.draw(Canvas(bmp))
-        val info = ShortcutInfo.Builder(this, a.key)
-            .setShortLabel(a.label)
-            .setIcon(Icon.createWithBitmap(bmp))
-            .setIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(a.component))
-            .build()
-        sm.requestPinShortcut(info, null)
     }
 
     private fun moveDialog(a: App) {

@@ -6,7 +6,11 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Bundle
@@ -18,6 +22,7 @@ import android.os.Process
 import android.os.UserHandle
 import android.provider.MediaStore
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.DragEvent
@@ -32,6 +37,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.text.Collator
 import java.util.Locale
+
+private const val DIR = "dir:"
 
 class App(val key: String, val pkg: String, val label: String, val icon: Drawable, val component: ComponentName, val user: UserHandle, val category: Int)
 
@@ -216,10 +223,9 @@ class MainActivity : Activity() {
             return
         }
         val byKey = apps.associateBy { it.key }
-        val dsk = desk.mapNotNull { byKey[it] }
         content.addView(header("🏠 Pulpit"))
-        if (dsk.isEmpty()) content.addView(text("Przytrzymaj palec na ikonie → „Skrót na pulpit”", 14f))
-        else content.addView(grid(dsk) { desk = it; render() })
+        if (desk.isEmpty()) content.addView(text("Przytrzymaj palec na ikonie → „Skrót na pulpit”", 14f))
+        else content.addView(deskGrid(byKey))
 
         val fav = favorites.mapNotNull { byKey[it] }
         content.addView(header("⭐ Ulubione"))
@@ -239,62 +245,163 @@ class MainActivity : Activity() {
         }
     }
 
-    /** [reorder] podany: przytrzymaj i przeciągnij ikonę na inną, żeby zmienić kolejność; puszczenie w miejscu otwiera menu. */
-    private fun grid(list: List<App>, reorder: ((List<String>) -> Unit)? = null): GridLayout {
-        val cols = if (big) 4 else 5
-        val g = GridLayout(this).apply { columnCount = cols }
-        for (a in list) {
-            val cell = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(0, dp(4), 0, dp(4))
-                addView(ImageView(context).apply { setImageDrawable(a.icon) }, LinearLayout.LayoutParams(dp(if (big) 64 else 48), dp(if (big) 64 else 48)))
-                addView(text(a.label, if (big) 16f else 12f).apply { gravity = Gravity.CENTER; maxLines = 2 })
-                setOnClickListener { launcher.startMainActivity(a.component, a.user, null, null) }
-                if (reorder == null) setOnLongClickListener { menu(a); true }
-                else {
-                    setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), a.key, 0); true }
-                    setOnDragListener { v, e ->
-                        when (e.action) {
-                            DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
-                            DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
-                            DragEvent.ACTION_DROP -> {
-                                val from = e.localState as String
-                                if (from == a.key) menu(a)
-                                else {
-                                    val keys = list.map { it.key }.toMutableList()
-                                    val to = keys.indexOf(a.key)
-                                    keys.remove(from)
-                                    keys.add(to, from)
-                                    reorder(keys)
+    private fun grid(list: List<App>) = cells(list.map { a ->
+        cell(a.icon, a.label).apply {
+            setOnClickListener { launcher.startMainActivity(a.component, a.user, null, null) }
+            setOnLongClickListener { menu(a); true }
+        }
+    })
+
+    /** Pulpit: aplikacje i foldery. Przytrzymaj i przeciągnij na inną ikonę = zmiana kolejności, na folder = wrzuć do folderu; puszczenie w miejscu otwiera menu. */
+    private fun deskGrid(byKey: Map<String, App>): GridLayout {
+        val shown = desk.filter { it.startsWith(DIR) || it in byKey }
+        return cells(shown.map { k ->
+            val a = byKey[k]
+            val name = k.removePrefix(DIR)
+            (if (a != null) cell(a.icon, a.label) else cell(folderIcon(dir(name).mapNotNull { byKey[it] }), name)).apply {
+                setOnClickListener { if (a != null) launcher.startMainActivity(a.component, a.user, null, null) else openDir(name) }
+                setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), k, 0); true }
+                setOnDragListener { v, e ->
+                    when (e.action) {
+                        DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
+                        DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
+                        DragEvent.ACTION_DROP -> {
+                            val from = e.localState as String
+                            when {
+                                from == k -> if (a != null) menu(a) else dirMenu(name)
+                                a == null && !from.startsWith(DIR) -> putInDir(from, name)
+                                else -> {
+                                    val l = shown.toMutableList()
+                                    val to = l.indexOf(k)
+                                    l.remove(from)
+                                    l.add(to, from)
+                                    desk = l
+                                    render()
                                 }
                             }
                         }
-                        true
                     }
+                    true
                 }
             }
-            g.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0 })
-        }
+        })
+    }
+
+    private fun cell(icon: Drawable, label: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(0, dp(2), 0, dp(2))
+        addView(ImageView(context).apply { setImageDrawable(icon) }, LinearLayout.LayoutParams(dp(if (big) 64 else 48), dp(if (big) 64 else 48)))
+        addView(text(label, if (big) 16f else 12f).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+    }
+
+    private fun cells(views: List<View>, cols: Int = if (big) 5 else 6): GridLayout {
+        val g = GridLayout(this).apply { columnCount = cols }
+        for (v in views) g.addView(v, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0 })
         // pusta komórka, żeby jedna ikona w rzędzie nie rozciągała się na całą szerokość
-        repeat((cols - list.size % cols) % cols) {
+        repeat((cols - views.size % cols) % cols) {
             g.addView(View(this), GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = 0 })
         }
         return g
     }
 
-    private fun menu(a: App) {
+    // --- foldery na pulpicie: na pulpicie wpis "dir:Nazwa", zawartość pod kluczem "dir:Nazwa" ---
+    private fun dir(n: String) = prefs.getString(DIR + n, "")!!.split('\n').filter { it.isNotEmpty() }
+    private fun setDir(n: String, v: List<String>) {
+        if (v.isNotEmpty()) prefs.edit().putString(DIR + n, v.joinToString("\n")).apply()
+        else { prefs.edit().remove(DIR + n).apply(); desk = desk - (DIR + n) } // pusty folder znika
+    }
+
+    /** Aplikacja z pulpitu do folderu; nowy folder zajmuje jej miejsce. */
+    private fun putInDir(key: String, n: String) {
+        val d = DIR + n
+        desk = if (d in desk) desk - key else desk.map { if (it == key) d else it }
+        setDir(n, dir(n) - key + key)
+        render()
+    }
+
+    private fun openDir(n: String) {
+        val byKey = apps.associateBy { it.key }
+        lateinit var d: AlertDialog
+        val g = cells(dir(n).mapNotNull { byKey[it] }.map { a ->
+            cell(a.icon, a.label).apply {
+                setOnClickListener { d.dismiss(); launcher.startMainActivity(a.component, a.user, null, null) }
+                setOnLongClickListener { d.dismiss(); menu(a, n); true }
+            }
+        }, if (big) 3 else 4)
+        d = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert).setTitle("📂 $n")
+            .setView(ScrollView(this).apply { setPadding(dp(8), dp(8), dp(8), dp(8)); addView(g) })
+            .show()
+    }
+
+    private fun pickDir(a: App) {
+        val dirs = desk.filter { it.startsWith(DIR) }.map { it.removePrefix(DIR) }
+        val choices = (listOf("➕ Nowy folder…") + dirs.map { "📂 $it" }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("${a.label} → folder na pulpicie").setItems(choices) { _, i ->
+            if (i == 0) askName("Nowy folder", "") { putInDir(a.key, it) } else putInDir(a.key, dirs[i - 1])
+        }.show()
+    }
+
+    private fun dirMenu(n: String) {
+        AlertDialog.Builder(this).setTitle("📂 $n").setItems(arrayOf("✏ Zmień nazwę", "🗑 Usuń folder (aplikacje wracają na pulpit)")) { _, i ->
+            if (i == 0) askName("Zmień nazwę", n) { new ->
+                if (new == n) return@askName
+                val inside = dir(n)
+                prefs.edit().remove(DIR + n).apply()
+                desk = if (DIR + new in desk) desk - (DIR + n) else desk.map { if (it == DIR + n) DIR + new else it }
+                setDir(new, (dir(new) + inside).distinct())
+            } else {
+                val l = desk.toMutableList()
+                val at = l.indexOf(DIR + n)
+                l.removeAt(at)
+                l.addAll(at, dir(n).filter { it !in l })
+                prefs.edit().remove(DIR + n).apply()
+                desk = l
+            }
+            render()
+        }.show()
+    }
+
+    private fun askName(title: String, start: String, done: (String) -> Unit) {
+        val input = EditText(this).apply { setText(start); setSingleLine() }
+        AlertDialog.Builder(this).setTitle(title).setView(input)
+            .setPositiveButton("OK") { _, _ -> input.text.toString().trim().takeIf { it.isNotEmpty() }?.let { done(it); render() } }
+            .setNegativeButton("Anuluj", null)
+            .show()
+    }
+
+    /** Miniaturka folderu: do 4 ikon w kratce 2×2. */
+    private fun folderIcon(inside: List<App>): Drawable {
+        val s = dp(64)
+        val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        GradientDrawable().apply { cornerRadius = s / 5f; setColor(0x44FFFFFF); setBounds(0, 0, s, s) }.draw(c)
+        val h = s / 2
+        val p = s / 16
+        inside.take(4).forEachIndexed { i, a ->
+            val x = (i % 2) * h
+            val y = (i / 2) * h
+            (a.icon.constantState?.newDrawable() ?: a.icon).apply { setBounds(x + p, y + p, x + h - p, y + h - p); draw(c) } // kopia: nie ruszamy granic ikony w siatce
+        }
+        return BitmapDrawable(resources, bmp)
+    }
+
+    private fun menu(a: App, inDir: String? = null) {
         val isFav = a.key in favorites
         val onDesk = a.key in desk
-        val items = arrayOf(if (isFav) "Usuń z ulubionych" else "⭐ Do ulubionych", "📁 Przenieś do folderu…", if (onDesk) "Usuń z pulpitu" else "📲 Skrót na pulpit", "ℹ Informacje o aplikacji")
-        AlertDialog.Builder(this).setTitle(a.label).setItems(items) { _, i ->
-            when (i) {
-                0 -> { favorites = if (isFav) favorites - a.key else favorites + a.key; render() }
-                1 -> moveDialog(a)
-                2 -> { desk = if (onDesk) desk - a.key else desk + a.key; render() }
-                3 -> launcher.startAppDetailsActivity(a.component, a.user, null, null)
+        val items = mutableListOf<Pair<String, () -> Unit>>(
+            (if (isFav) "Usuń z ulubionych" else "⭐ Do ulubionych") to { favorites = if (isFav) favorites - a.key else favorites + a.key; render() },
+            "📁 Przenieś do folderu…" to { moveDialog(a) })
+        when {
+            inDir != null -> items += "↩ Wyjmij z folderu na pulpit" to { setDir(inDir, dir(inDir) - a.key); if (a.key !in desk) desk = desk + a.key; render() }
+            onDesk -> {
+                items += "📂 Do folderu na pulpicie…" to { pickDir(a) }
+                items += "Usuń z pulpitu" to { desk = desk - a.key; render() }
             }
-        }.show()
+            else -> items += "📲 Skrót na pulpit" to { desk = desk + a.key; render() }
+        }
+        items += "ℹ Informacje o aplikacji" to { launcher.startAppDetailsActivity(a.component, a.user, null, null) }
+        AlertDialog.Builder(this).setTitle(a.label).setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }.show()
     }
 
     private fun moveDialog(a: App) {

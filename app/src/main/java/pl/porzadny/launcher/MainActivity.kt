@@ -78,6 +78,8 @@ class MainActivity : Activity() {
     private val pendingNew = ArrayDeque<String>()
     private var resumed = false
     private var asking = false
+    // Przycisk 📂: chwilowo wszystkie foldery otwarte; zapisane `expanded` zostaje nietknięte, drugi klik do niego wraca.
+    private var openAll: Set<String>? = null
 
     private val callback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p: String, u: UserHandle) = reload()
@@ -102,13 +104,23 @@ class MainActivity : Activity() {
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             })
         }
-        val bigBtn = Button(this).apply {
+        fun small(b: Button) = b.apply { minWidth = 0; minimumWidth = 0; setPadding(dp(10), 0, dp(10), 0) }
+        val bigBtn = small(Button(this)).apply {
             text = "A+"
             setOnClickListener { big = !big; render() }
+        }
+        val allBtn = small(Button(this)).apply {
+            text = "📂"
+            setOnClickListener {
+                openAll = if (openAll == null) FOLDERS.toSet() else null
+                text = if (openAll == null) "📂" else "📁"
+                render()
+            }
         }
         val top = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(search, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(allBtn)
             addView(bigBtn)
         }
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, dp(8), dp(24)) }
@@ -273,13 +285,17 @@ class MainActivity : Activity() {
         else content.addView(grid(fav))
 
         val mv = moves
-        val open = expanded
+        val open = openAll ?: expanded
         val groups = apps.groupBy { folderOf(it, mv) }
         for (f in FOLDERS) {
             val list = groups[f] ?: continue
             val isOpen = f in open
             content.addView(header("${if (isOpen) "▾" else "▸"}  📁 $f (${list.size})").apply {
-                setOnClickListener { expanded = if (isOpen) open - f else open + f; render() }
+                setOnClickListener {
+                    val v = if (isOpen) open - f else open + f
+                    if (openAll != null) openAll = v else expanded = v
+                    render()
+                }
             })
             if (isOpen) content.addView(grid(list))
         }

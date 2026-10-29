@@ -1,5 +1,6 @@
 package pl.porzadny.launcher
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
@@ -20,6 +21,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.os.Process
 import android.os.UserHandle
+import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextUtils
@@ -90,7 +92,7 @@ class MainActivity : Activity() {
         launcher = getSystemService(LauncherApps::class.java)
 
         search = EditText(this).apply {
-            hint = "🔍 Szukaj aplikacji"
+            hint = "🔍 Szukaj aplikacji i kontaktów"
             setSingleLine()
             setTextColor(Color.WHITE)
             setHintTextColor(0xAAFFFFFF.toInt())
@@ -182,6 +184,43 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) = render()
+
+    /** Wyniki z kontaktów pod aplikacjami: 📞 otwiera wybieranie numeru, 💬 nowego SMS-a. */
+    private fun contacts(q: String) {
+        content.addView(header("👤 Kontakty"))
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            content.addView(text("Dotknij tutaj, żeby szukać też w kontaktach", 14f).apply {
+                setPadding(dp(4), dp(8), dp(4), dp(8))
+                setOnClickListener { requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1) }
+            })
+            return
+        }
+        // shortcut: zapytanie na głównym wątku, max 20 wyników; przenieść do wątku, gdyby przy tysiącach kontaktów cięło przy pisaniu
+        val seen = HashSet<String>()
+        contentResolver.query(Uri.withAppendedPath(Phone.CONTENT_FILTER_URI, Uri.encode(q)),
+            arrayOf(Phone.DISPLAY_NAME, Phone.NUMBER), null, null, Phone.DISPLAY_NAME)?.use { c ->
+            while (seen.size < 20 && c.moveToNext()) {
+                val name = c.getString(0) ?: continue
+                val num = c.getString(1) ?: continue
+                if (seen.add(name + num.filter { it.isDigit() })) content.addView(contactRow(name, num)) // ten sam numer zapisany różnie
+            }
+        }
+        if (seen.isEmpty()) content.addView(text("Brak pasujących kontaktów", 14f))
+    }
+
+    private fun contactRow(name: String, num: String) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(4), dp(4), 0, dp(4))
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text(name, if (big) 20f else 16f).apply { setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
+            addView(text(num, if (big) 16f else 13f))
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(Button(context).apply { text = "📞"; setOnClickListener { startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", num, null))) } })
+        addView(Button(context).apply { text = "💬"; setOnClickListener { startActivity(Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", num, null))) } })
+    }
+
     /** Nowo zainstalowana aplikacja: pokaż proponowany folder i daj go zaakceptować albo zmienić. */
     private fun askNext() {
         if (!resumed || asking) return
@@ -220,6 +259,7 @@ class MainActivity : Activity() {
         val q = search.text.toString().trim()
         if (q.isNotEmpty()) {
             content.addView(grid(apps.filter { it.label.contains(q, ignoreCase = true) }))
+            contacts(q)
             return
         }
         val byKey = apps.associateBy { it.key }
@@ -292,7 +332,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
         setPadding(0, dp(2), 0, dp(2))
         addView(ImageView(context).apply { setImageDrawable(icon) }, LinearLayout.LayoutParams(dp(if (big) 64 else 48), dp(if (big) 64 else 48)))
-        addView(text(label, if (big) 16f else 12f).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+        addView(text(label, if (big) 16f else 12f).apply { gravity = Gravity.CENTER; setSingleLine(); ellipsize = TextUtils.TruncateAt.END })
     }
 
     private fun cells(views: List<View>, cols: Int = if (big) 5 else 6): GridLayout {

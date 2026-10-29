@@ -62,9 +62,17 @@ class MainActivity : Activity() {
     private var desk: List<String>
         get() = prefs.getString("desk", "")!!.split('\n').filter { it.isNotEmpty() }
         set(v) = prefs.edit().putString("desk", v.joinToString("\n")).apply()
+    // Foldery z listy: wbudowane bez usuniętych + własne. "Inne" zostaje zawsze, tam trafia reszta.
+    private var custom: List<String>
+        get() = prefs.getString("custom", "")!!.split('\n').filter { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("custom", v.joinToString("\n")).apply()
+    private var gone: Set<String>
+        get() = prefs.getStringSet("gone", emptySet())!!
+        set(v) = prefs.edit().putStringSet("gone", v).apply()
+    private val folders get() = FOLDERS - gone + custom
     // Kolejność folderów z listy; foldery spoza zapisu (np. nowe w kolejnej wersji) dochodzą na koniec.
     private var order: List<String>
-        get() = prefs.getString("order", "")!!.split('\n').filter { it in FOLDERS }.let { it + (FOLDERS - it.toSet()) }
+        get() = folders.let { all -> prefs.getString("order", "")!!.split('\n').filter { it in all }.let { it + (all - it.toSet()) } }
         set(v) = prefs.edit().putString("order", v.joinToString("\n")).apply()
     private var moves: Map<String, String>
         get() = prefs.getString("moves", "")!!.split('\n').mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
@@ -117,7 +125,7 @@ class MainActivity : Activity() {
         val allBtn = small(Button(this)).apply {
             text = "📂"
             setOnClickListener {
-                openAll = if (openAll == null) FOLDERS.toSet() else null
+                openAll = if (openAll == null) order.toSet() else null
                 text = if (openAll == null) "📂" else "📁"
                 render()
             }
@@ -269,7 +277,8 @@ class MainActivity : Activity() {
         return m
     }
 
-    private fun folderOf(a: App, mv: Map<String, String>) = categorize(a.pkg, mv[a.pkg], roles[a.pkg], a.category)
+    private fun folderOf(a: App, mv: Map<String, String>, all: List<String> = folders) =
+        categorize(a.pkg, mv[a.pkg]?.takeIf { it in all }, roles[a.pkg], a.category).takeIf { it in all } ?: "Inne"
 
     private fun render() {
         content.removeAllViews()
@@ -291,11 +300,11 @@ class MainActivity : Activity() {
 
         val mv = moves
         val open = openAll ?: expanded
-        val groups = apps.groupBy { folderOf(it, mv) }
         val ord = order
+        val groups = apps.groupBy { folderOf(it, mv, ord) }
         var nr = 0 // numerujemy tylko foldery, które coś zawierają i są widoczne
         for (f in ord) {
-            val list = groups[f] ?: continue
+            val list = groups[f] ?: if (f in custom) emptyList() else continue // własny folder widać, nawet pusty
             val isOpen = f in open
             content.addView(header("${if (isOpen) "▾" else "▸"}  ${++nr}. 📁 $f (${list.size})").apply {
                 if (!isOpen) setPadding(dp(4), dp(2), dp(4), dp(2)) // zamknięte foldery ciasno jeden pod drugim
@@ -304,14 +313,14 @@ class MainActivity : Activity() {
                     if (openAll != null) openAll = v else expanded = v
                     render()
                 }
-                // przytrzymaj i przeciągnij na inny folder = zmiana kolejności folderów
+                // przytrzymaj i przeciągnij na inny folder = zmiana kolejności folderów; puszczenie w miejscu = menu folderu
                 setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), CAT + f, 0); true }
                 setOnDragListener { v, e ->
                     val from = (e.localState as? String)?.takeIf { it.startsWith(CAT) }?.removePrefix(CAT) ?: return@setOnDragListener false
                     when (e.action) {
                         DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
                         DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
-                        DragEvent.ACTION_DROP -> if (from != f) {
+                        DragEvent.ACTION_DROP -> if (from == f) folderMenu(f) else {
                             val l = ord.toMutableList()
                             val to = l.indexOf(f)
                             l.remove(from)
@@ -444,6 +453,20 @@ class MainActivity : Activity() {
         }.show()
     }
 
+    private fun folderMenu(f: String) {
+        val items = mutableListOf<Pair<String, () -> Unit>>("➕ Nowy folder…" to { newFolder {} })
+        if (f != "Inne") items += "🗑 Usuń folder (aplikacje idą do „Inne”)" to {
+            if (f in custom) custom = custom - f else gone = gone + f
+            render()
+        }
+        AlertDialog.Builder(this).setTitle("📁 $f").setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }.show()
+    }
+
+    private fun newFolder(done: (String) -> Unit) = askName("Nowy folder", "") { n ->
+        if (n in gone) gone = gone - n else if (n !in folders) custom = custom + n
+        done(n)
+    }
+
     private fun askName(title: String, start: String, done: (String) -> Unit) {
         val input = EditText(this).apply { setText(start); setSingleLine() }
         AlertDialog.Builder(this).setTitle(title).setView(input)
@@ -487,9 +510,13 @@ class MainActivity : Activity() {
     }
 
     private fun moveDialog(a: App) {
-        val choices = arrayOf("↩ Automatycznie") + order
+        val choices = arrayOf("↩ Automatycznie", "➕ Nowy folder…") + order
         AlertDialog.Builder(this).setTitle("Przenieś: ${a.label}").setItems(choices) { _, i ->
-            moves = if (i == 0) moves - a.pkg else moves + (a.pkg to choices[i])
+            when (i) {
+                0 -> moves = moves - a.pkg
+                1 -> return@setItems newFolder { moves = moves + (a.pkg to it) }
+                else -> moves = moves + (a.pkg to choices[i])
+            }
             render()
         }.show()
     }

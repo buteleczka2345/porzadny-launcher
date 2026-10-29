@@ -51,10 +51,10 @@ private fun categoryFolder(category: Int): String? = when (category) {
 
 /**
  * Do jakiego folderu trafia aplikacja:
- * ręczne przeniesienie > rola w systemie (przeglądarka, telefon…) > nazwa pakietu > kategoria z Androida > "Inne".
+ * ręczne przeniesienie (sprawdzone przez wołającego) > rola w systemie (przeglądarka, telefon…) > nazwa pakietu > kategoria z Androida > "Inne".
  */
 fun categorize(pkg: String, manual: String?, role: String?, category: Int): String =
-    manual?.takeIf { it in FOLDERS }
+    manual
         ?: role
         ?: keywordFolder(pkg)
         ?: categoryFolder(category)

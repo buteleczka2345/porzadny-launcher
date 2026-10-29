@@ -20,6 +20,7 @@ import android.provider.MediaStore
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.DragEvent
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -218,7 +219,7 @@ class MainActivity : Activity() {
         val dsk = desk.mapNotNull { byKey[it] }
         content.addView(header("🏠 Pulpit"))
         if (dsk.isEmpty()) content.addView(text("Przytrzymaj palec na ikonie → „Skrót na pulpit”", 14f))
-        else content.addView(grid(dsk))
+        else content.addView(grid(dsk) { desk = it; render() })
 
         val fav = favorites.mapNotNull { byKey[it] }
         content.addView(header("⭐ Ulubione"))
@@ -238,18 +239,40 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun grid(list: List<App>): GridLayout {
-        val cols = if (big) 3 else 4
+    /** [reorder] podany: przytrzymaj i przeciągnij ikonę na inną, żeby zmienić kolejność; puszczenie w miejscu otwiera menu. */
+    private fun grid(list: List<App>, reorder: ((List<String>) -> Unit)? = null): GridLayout {
+        val cols = if (big) 4 else 5
         val g = GridLayout(this).apply { columnCount = cols }
         for (a in list) {
             val cell = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(0, dp(8), 0, dp(8))
+                setPadding(0, dp(4), 0, dp(4))
                 addView(ImageView(context).apply { setImageDrawable(a.icon) }, LinearLayout.LayoutParams(dp(if (big) 64 else 48), dp(if (big) 64 else 48)))
                 addView(text(a.label, if (big) 16f else 12f).apply { gravity = Gravity.CENTER; maxLines = 2 })
                 setOnClickListener { launcher.startMainActivity(a.component, a.user, null, null) }
-                setOnLongClickListener { menu(a); true }
+                if (reorder == null) setOnLongClickListener { menu(a); true }
+                else {
+                    setOnLongClickListener { startDragAndDrop(null, View.DragShadowBuilder(this), a.key, 0); true }
+                    setOnDragListener { v, e ->
+                        when (e.action) {
+                            DragEvent.ACTION_DRAG_ENTERED -> v.setBackgroundColor(0x33FFFFFF)
+                            DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> v.background = null
+                            DragEvent.ACTION_DROP -> {
+                                val from = e.localState as String
+                                if (from == a.key) menu(a)
+                                else {
+                                    val keys = list.map { it.key }.toMutableList()
+                                    val to = keys.indexOf(a.key)
+                                    keys.remove(from)
+                                    keys.add(to, from)
+                                    reorder(keys)
+                                }
+                            }
+                        }
+                        true
+                    }
+                }
             }
             g.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0 })
         }

@@ -69,7 +69,11 @@ class MainActivity : Activity() {
     private var gone: Set<String>
         get() = prefs.getStringSet("gone", emptySet())!!
         set(v) = prefs.edit().putStringSet("gone", v).apply()
-    private val folders get() = FOLDERS - gone + custom
+    // Wbudowany folder pod nową nazwą: aplikacje dalej trafiają do niego automatycznie.
+    private var renamed: Map<String, String>
+        get() = prefs.getString("renamed", "")!!.split('\n').mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        set(v) = prefs.edit().putString("renamed", v.entries.joinToString("\n") { "${it.key}=${it.value}" }).apply()
+    private val folders get() = renamed.let { rn -> (FOLDERS - gone).map { rn[it] ?: it } } + custom
     // Kolejność folderów z listy; foldery spoza zapisu (np. nowe w kolejnej wersji) dochodzą na koniec.
     private var order: List<String>
         get() = folders.let { all -> prefs.getString("order", "")!!.split('\n').filter { it in all }.let { it + (all - it.toSet()) } }
@@ -278,7 +282,9 @@ class MainActivity : Activity() {
     }
 
     private fun folderOf(a: App, mv: Map<String, String>, all: List<String> = folders) =
-        categorize(a.pkg, mv[a.pkg]?.takeIf { it in all }, roles[a.pkg], a.category).takeIf { it in all } ?: "Inne"
+        mv[a.pkg]?.takeIf { it in all }
+            ?: categorize(a.pkg, null, roles[a.pkg], a.category).let { renamed[it] ?: it }.takeIf { it in all }
+            ?: "Inne"
 
     private fun render() {
         content.removeAllViews()
@@ -455,11 +461,28 @@ class MainActivity : Activity() {
 
     private fun folderMenu(f: String) {
         val items = mutableListOf<Pair<String, () -> Unit>>("➕ Nowy folder…" to { newFolder {} })
-        if (f != "Inne") items += "🗑 Usuń folder (aplikacje idą do „Inne”)" to {
-            if (f in custom) custom = custom - f else gone = gone + f
-            render()
+        if (f != "Inne") {
+            items += "✏ Zmień nazwę" to { askName("Zmień nazwę", f) { renameFolder(f, it) } }
+            items += "🗑 Usuń folder (aplikacje idą do „Inne”)" to {
+                if (f in custom) custom = custom - f
+                else { val k = builtIn(f); gone = gone + k; renamed = renamed - k }
+                render()
+            }
         }
         AlertDialog.Builder(this).setTitle("📁 $f").setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }.show()
+    }
+
+    private fun builtIn(f: String) = renamed.entries.find { it.value == f }?.key ?: f
+
+    private fun renameFolder(old: String, new: String) {
+        if (new in folders) return // taka nazwa już jest
+        fun swap(x: String) = if (x == old) new else x
+        val ord = order // przed zmianą nazwy, inaczej folder spadłby na koniec
+        if (old in custom) custom = custom.map(::swap) else renamed = renamed + (builtIn(old) to new)
+        order = ord.map(::swap)
+        moves = moves.mapValues { swap(it.value) }
+        expanded = expanded.map(::swap).toSet()
+        openAll = openAll?.map(::swap)?.toSet()
     }
 
     private fun newFolder(done: (String) -> Unit) = askName("Nowy folder", "") { n ->

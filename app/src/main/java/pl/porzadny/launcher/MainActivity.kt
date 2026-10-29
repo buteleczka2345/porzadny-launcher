@@ -215,6 +215,11 @@ class MainActivity : Activity() {
             return
         }
         val byKey = apps.associateBy { it.key }
+        val dsk = desk.mapNotNull { byKey[it] }
+        content.addView(header("🏠 Pulpit"))
+        if (dsk.isEmpty()) content.addView(text("Przytrzymaj palec na ikonie → „Skrót na pulpit”", 14f))
+        else content.addView(grid(dsk))
+
         val fav = favorites.mapNotNull { byKey[it] }
         content.addView(header("⭐ Ulubione"))
         if (fav.isEmpty()) content.addView(text("Przytrzymaj palec na ikonie → „Do ulubionych”", 14f))

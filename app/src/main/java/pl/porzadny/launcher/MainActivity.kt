@@ -293,10 +293,11 @@ class MainActivity : Activity() {
         val open = openAll ?: expanded
         val groups = apps.groupBy { folderOf(it, mv) }
         val ord = order
+        var nr = 0 // numerujemy tylko foldery, które coś zawierają i są widoczne
         for (f in ord) {
             val list = groups[f] ?: continue
             val isOpen = f in open
-            content.addView(header("${if (isOpen) "▾" else "▸"}  📁 $f (${list.size})").apply {
+            content.addView(header("${if (isOpen) "▾" else "▸"}  ${++nr}. 📁 $f (${list.size})").apply {
                 if (!isOpen) setPadding(dp(4), dp(2), dp(4), dp(2)) // zamknięte foldery ciasno jeden pod drugim
                 setOnClickListener {
                     val v = if (isOpen) open - f else open + f

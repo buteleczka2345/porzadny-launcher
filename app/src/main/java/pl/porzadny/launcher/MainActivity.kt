@@ -291,6 +291,7 @@ class MainActivity : Activity() {
             val list = groups[f] ?: continue
             val isOpen = f in open
             content.addView(header("${if (isOpen) "▾" else "▸"}  📁 $f (${list.size})").apply {
+                if (!isOpen) setPadding(dp(4), dp(5), dp(4), dp(5)) // zamknięte foldery ciasno jeden pod drugim
                 setOnClickListener {
                     val v = if (isOpen) open - f else open + f
                     if (openAll != null) openAll = v else expanded = v
